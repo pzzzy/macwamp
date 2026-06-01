@@ -23,8 +23,9 @@ final class MacWampApp: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         let args = Array(CommandLine.arguments.dropFirst())
-        if let path = args.first(where: { !$0.hasPrefix("--") }) {
-            controller.load(url: URL(fileURLWithPath: path), autoplay: true)
+        let inputURLs = args.filter { !$0.hasPrefix("--") }.map { URL(fileURLWithPath: $0) }
+        if !inputURLs.isEmpty {
+            controller.addToPlaylist(urls: inputURLs, autoplayFirstIfEmpty: true)
         }
         if args.contains("--show-eq") { controller.toggleEqualizerWindow() }
         if args.contains("--show-playlist") { controller.togglePlaylistWindow() }
@@ -126,10 +127,10 @@ final class WinampController: NSObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio, .mp3, .mpeg4Audio, .wav, .aiff]
         panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
-            self?.load(url: url, autoplay: true)
+            self?.addToPlaylist(urls: [url], autoplayFirstIfEmpty: true)
         }
     }
 
@@ -137,7 +138,7 @@ final class WinampController: NSObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio, .mp3, .mpeg4Audio, .wav, .aiff]
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.begin { [weak self] result in
             guard result == .OK else { return }
             self?.addToPlaylist(urls: panel.urls, autoplayFirstIfEmpty: true)
@@ -302,11 +303,40 @@ final class WinampController: NSObject {
     }
 
     func addToPlaylist(urls: [URL], autoplayFirstIfEmpty: Bool) {
+        let expanded = audioFileURLs(from: urls)
+        guard !expanded.isEmpty else { NSSound.beep(); return }
         let wasEmpty = playlist.isEmpty
-        for url in urls where !playlist.contains(where: { $0.url == url }) {
+        for url in expanded where !playlist.contains(where: { $0.url == url }) {
             playlist.append(PlaylistEntry(url: url, title: url.deletingPathExtension().lastPathComponent, duration: nil))
         }
-        if autoplayFirstIfEmpty, wasEmpty, let first = urls.first { load(url: first, autoplay: true) }
+        playlistScroll = playlistScroll.clamped(0, max(0, playlist.count - 1))
+        if autoplayFirstIfEmpty, wasEmpty, let first = expanded.first { load(url: first, autoplay: true) }
+    }
+
+    private func audioFileURLs(from urls: [URL]) -> [URL] {
+        var found: [URL] = []
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey]
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: keys)
+            if values?.isDirectory == true {
+                if let enumerator = FileManager.default.enumerator(at: url,
+                                                                   includingPropertiesForKeys: Array(keys),
+                                                                   options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
+                    for case let child as URL in enumerator {
+                        if isSupportedAudioFile(child) { found.append(child) }
+                    }
+                }
+            } else if values?.isRegularFile == true || isSupportedAudioFile(url) {
+                if isSupportedAudioFile(url) { found.append(url) }
+            }
+        }
+        var seen = Set<String>()
+        return found.map { $0.standardizedFileURL }.filter { seen.insert($0.path).inserted }
+    }
+
+    private func isSupportedAudioFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["mp3", "m4a", "mp4", "aac", "wav", "aif", "aiff", "flac", "caf"].contains(ext)
     }
 
     private func upsertPlaylistEntry(url: URL, duration: TimeInterval) {
@@ -366,9 +396,12 @@ final class WinampController: NSObject {
         if playlistVisible { playlistWindow?.orderOut(nil); playlistVisible = false; return }
         if playlistWindow == nil {
             let scale = CGFloat(2)
-            let rect = NSRect(x: 0, y: 0, width: 275 * scale, height: 116 * scale)
-            playlistWindow = WinampAuxWindow(contentRect: rect, title: "MacWamp Playlist")
-            playlistWindow?.contentView = PlaylistView(frame: rect, controller: self, pixelScale: scale)
+            let rect = NSRect(x: 0, y: 0, width: 375 * scale, height: 232 * scale)
+            playlistWindow = WinampAuxWindow(contentRect: rect, title: "MacWamp Playlist", resizable: true)
+            let view = PlaylistView(frame: rect, controller: self, pixelScale: scale)
+            view.autoresizingMask = [.width, .height]
+            playlistWindow?.contentView = view
+            playlistWindow?.minSize = NSSize(width: 275 * scale, height: 116 * scale)
         }
         position(auxWindow: playlistWindow, belowMainByClassicPixels: eqVisible ? 232 : 116)
         playlistWindow?.makeKeyAndOrderFront(nil)
@@ -451,9 +484,11 @@ struct PlaylistEntry: Equatable {
 }
 
 final class WinampAuxWindow: NSWindow {
-    init(contentRect: NSRect, title: String) {
+    init(contentRect: NSRect, title: String, resizable: Bool = false) {
+        var mask: NSWindow.StyleMask = [.borderless, .miniaturizable]
+        if resizable { mask.insert(.resizable) }
         super.init(contentRect: contentRect,
-                   styleMask: [.borderless, .miniaturizable],
+                   styleMask: mask,
                    backing: .buffered,
                    defer: false)
         isOpaque = false
@@ -463,7 +498,7 @@ final class WinampAuxWindow: NSWindow {
         collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         self.title = title
         minSize = contentRect.size
-        maxSize = contentRect.size
+        if !styleMask.contains(.resizable) { maxSize = contentRect.size }
     }
 
     override var canBecomeKey: Bool { true }

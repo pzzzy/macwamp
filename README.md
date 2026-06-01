@@ -14,7 +14,7 @@ MacWamp is an early public release / proof of concept. It already includes:
 - accurate bitrate / sample-rate / mono-stereo metadata via AudioToolbox
 - AVAudioEngine playback
 - a real AVAudioUnitEQ-backed equalizer window
-- playlist window with add/remove/select/clear, drag-and-drop, scrolling, and double-click-to-play
+- playlist window with add/remove/select/clear, drag-and-drop files/folders, recursive folder import, scrolling, and double-click-to-play
 - keyboard shortcuts for common Winamp-style controls
 - optional local skin asset loading for private compatibility work
 
@@ -98,13 +98,14 @@ Launch without a file:
 swift run MacWamp
 ```
 
-Launch with an audio file:
+Launch with an audio file or a folder of audio files:
 
 ```sh
 swift run MacWamp /path/to/song.mp3
+swift run MacWamp /path/to/music-folder
 ```
 
-Launch with the EQ and playlist windows already open:
+Launch with the EQ and resizable playlist windows already open:
 
 ```sh
 swift run MacWamp /path/to/song.mp3 --show-eq --show-playlist
@@ -113,7 +114,8 @@ swift run MacWamp /path/to/song.mp3 --show-eq --show-playlist
 Inside the app:
 
 - click eject/open to choose an audio file
-- drag an audio file onto the main or playlist window
+- drag an audio file or folder onto the main or playlist window
+- drag the playlist lower-right grip to resize it and show more rows
 - double-click a playlist row to play it
 - use the main EQ and PL buttons to show/hide auxiliary windows
 

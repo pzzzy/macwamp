@@ -160,9 +160,9 @@ final class WinampView: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let item = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL else { return false }
-        controller.load(url: item, autoplay: true)
-        return true
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
+        controller.addToPlaylist(urls: urls, autoplayFirstIfEmpty: true)
+        return !urls.isEmpty
     }
 
     private func updateContinuous(_ region: Region, point: CGPoint) {

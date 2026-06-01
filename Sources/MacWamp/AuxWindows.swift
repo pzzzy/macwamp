@@ -148,8 +148,10 @@ final class PlaylistView: NSView {
     private var pressed: Region?
     private var selected: Int?
     private var changeID: UUID?
+    private var resizeStartFrame: NSRect?
+    private var resizeStartScreenPoint: NSPoint?
 
-    private enum Region: Equatable { case close, add, remove, select, misc, list, scrollbar, drag }
+    private enum Region: Equatable { case close, add, remove, select, misc, list, scrollbar, resize, drag }
 
     init(frame: NSRect, controller: WinampController, pixelScale: CGFloat) {
         self.controller = controller
@@ -167,59 +169,91 @@ final class PlaylistView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    private var classicSize: CGSize {
+        CGSize(width: max(275, floor(bounds.width / pixelScale)),
+               height: max(116, floor(bounds.height / pixelScale)))
+    }
+    private var listRows: Int { max(1, Int((classicSize.height - 60) / 10)) }
+    private var listRect: CGRect { CGRect(x: 12, y: 22, width: classicSize.width - 32, height: classicSize.height - 60) }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.saveGState()
         ctx.interpolationQuality = .none
         ctx.scaleBy(x: pixelScale, y: pixelScale)
-        drawClassicFrame()
+        drawClassicFrame(width: classicSize.width, height: classicSize.height)
         drawEntries()
-        drawBottomTime()
+        drawBottomTime(width: classicSize.width, height: classicSize.height)
         ctx.restoreGState()
     }
 
-    private func drawClassicFrame() {
-        // Fixed 275x116 classic playlist: top title strip + middle list area + bottom controls.
-        skin.pledit.draw(src: CGRect(x: 0, y: window?.isKeyWindow == false ? 21 : 0, width: 25, height: 20), dst: CGRect(x: 0, y: 0, width: 25, height: 20))
-        skin.pledit.draw(src: CGRect(x: 26, y: window?.isKeyWindow == false ? 21 : 0, width: 100, height: 20), dst: CGRect(x: 25, y: 0, width: 100, height: 20))
-        skin.pledit.draw(src: CGRect(x: 127, y: window?.isKeyWindow == false ? 21 : 0, width: 25, height: 20), dst: CGRect(x: 125, y: 0, width: 125, height: 20))
-        skin.pledit.draw(src: CGRect(x: 153, y: window?.isKeyWindow == false ? 21 : 0, width: 25, height: 20), dst: CGRect(x: 250, y: 0, width: 25, height: 20))
-        skin.pledit.draw(src: CGRect(x: 0, y: 42, width: 12, height: 29), dst: CGRect(x: 0, y: 20, width: 12, height: 58))
-        skin.pledit.draw(src: CGRect(x: 31, y: 42, width: 20, height: 29), dst: CGRect(x: 255, y: 20, width: 20, height: 58))
-        skin.pledit.draw(src: CGRect(x: 179, y: 0, width: 25, height: 38), dst: CGRect(x: 0, y: 78, width: 25, height: 38))
-        skin.pledit.draw(src: CGRect(x: 205, y: 0, width: 75, height: 38), dst: CGRect(x: 25, y: 78, width: 175, height: 38))
-        skin.pledit.draw(src: CGRect(x: 72, y: 42, width: 50, height: 38), dst: CGRect(x: 200, y: 78, width: 50, height: 38))
-        skin.pledit.draw(src: CGRect(x: 126, y: 42, width: 25, height: 38), dst: CGRect(x: 250, y: 78, width: 25, height: 38))
-        if pressed == .close { skin.pledit.draw(src: CGRect(x: 52, y: 42, width: 9, height: 9), dst: CGRect(x: 264, y: 3, width: 9, height: 9)) }
+    private func drawClassicFrame(width w: CGFloat, height h: CGFloat) {
+        let activeY: CGFloat = window?.isKeyWindow == false ? 21 : 0
+        let bottomY = h - 38
+        let sideHeight = h - 58
+
+        // Original draw_pe.cpp scalable titlebar: left cap, stretch/tile middle, 100px title, more fill, right cap/buttons.
+        skin.pledit.draw(src: CGRect(x: 0, y: activeY, width: 25, height: 20), dst: CGRect(x: 0, y: 0, width: 25, height: 20))
+        drawTiled(src: CGRect(x: 127, y: activeY, width: 25, height: 20), dst: CGRect(x: 25, y: 0, width: max(0, (w - 150) / 2), height: 20))
+        skin.pledit.draw(src: CGRect(x: 26, y: activeY, width: 100, height: 20), dst: CGRect(x: 25 + max(0, (w - 150) / 2), y: 0, width: 100, height: 20))
+        drawTiled(src: CGRect(x: 127, y: activeY, width: 25, height: 20), dst: CGRect(x: 125 + max(0, (w - 150) / 2), y: 0, width: max(0, w - 25 - (125 + max(0, (w - 150) / 2))), height: 20))
+        skin.pledit.draw(src: CGRect(x: 153, y: activeY, width: 25, height: 20), dst: CGRect(x: w - 25, y: 0, width: 25, height: 20))
+
+        drawTiled(src: CGRect(x: 0, y: 42, width: 12, height: 29), dst: CGRect(x: 0, y: 20, width: 12, height: sideHeight))
+        drawTiled(src: CGRect(x: 31, y: 42, width: 5, height: 29), dst: CGRect(x: w - 20, y: 20, width: 5, height: sideHeight))
+        drawTiled(src: CGRect(x: 44, y: 42, width: 7, height: 29), dst: CGRect(x: w - 7, y: 20, width: 7, height: sideHeight))
+
+        // Main list background bounded by the original left/scrollbar borders.
+        NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.94).setFill()
+        listRect.fill()
+
+        // Original bottom strip: fixed controls, tiled middle, optional center chunk, fixed right strip.
+        skin.pledit.draw(src: CGRect(x: 0, y: 72, width: 125, height: 38), dst: CGRect(x: 0, y: bottomY, width: 125, height: 38))
+        let middleEnd = max(125, w - 150)
+        drawTiled(src: CGRect(x: 179, y: 0, width: 25, height: 38), dst: CGRect(x: 125, y: bottomY, width: max(0, middleEnd - 125), height: 38))
+        skin.pledit.draw(src: CGRect(x: 126, y: 72, width: 150, height: 38), dst: CGRect(x: w - 150, y: bottomY, width: 150, height: 38))
+
+        drawScrollbar(width: w, height: h)
+        if pressed == .close { skin.pledit.draw(src: CGRect(x: 52, y: 42, width: 9, height: 9), dst: CGRect(x: w - 11, y: 3, width: 9, height: 9)) }
+    }
+
+    private func drawScrollbar(width w: CGFloat, height h: CGFloat) {
+        let track = CGRect(x: w - 15, y: 20, width: 8, height: h - 58)
+        drawTiled(src: CGRect(x: 36, y: 42, width: 8, height: 29), dst: track)
+        let extra = max(0, controller.playlist.count - listRows)
+        guard extra > 0 else { return }
+        let thumbH = max(CGFloat(18), min(track.height, track.height * CGFloat(listRows) / CGFloat(controller.playlist.count)))
+        let maxScroll = max(1, extra)
+        let thumbY = track.minY + (track.height - thumbH) * CGFloat(controller.playlistScroll.clamped(0, extra)) / CGFloat(maxScroll)
+        skin.pledit.draw(src: CGRect(x: pressed == .scrollbar ? 61 : 52, y: 53, width: 8, height: 18), dst: CGRect(x: track.minX, y: thumbY, width: 8, height: thumbH))
     }
 
     private func drawEntries() {
-        let listRect = NSRect(x: 12, y: 22, width: 243, height: 55)
-        NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.92).setFill()
-        listRect.fill()
-        let visible = 5
-        let start = controller.playlistScroll.clamped(0, max(0, controller.playlist.count - visible))
-        for row in 0..<visible {
+        let rows = listRows
+        let start = controller.playlistScroll.clamped(0, max(0, controller.playlist.count - rows))
+        let titleChars = max(8, Int((listRect.width - 50) / 5))
+        for row in 0..<rows {
             let idx = start + row
-            let y = 24 + row * 10
+            let y = Int(listRect.minY) + 2 + row * 10
             guard controller.playlist.indices.contains(idx) else { continue }
             let isCurrent = idx == controller.currentPlaylistIndex
             let isSelected = idx == selected
             if isSelected {
                 NSColor(calibratedRed: 0/255, green: 64/255, blue: 128/255, alpha: 1).setFill()
-                NSRect(x: 12, y: y - 1, width: 243, height: 10).fill()
+                NSRect(x: listRect.minX, y: CGFloat(y - 1), width: listRect.width, height: 10).fill()
             }
             let prefix = String(format: "%02d. ", idx + 1)
             let duration = controller.playlist[idx].duration.map { formatTime($0) } ?? "--:--"
-            drawText(prefix + controller.playlist[idx].title, x: 14, y: y, maxChars: 38, current: isCurrent)
-            drawText(duration, x: 230, y: y, maxChars: 5, current: isCurrent)
+            drawText(prefix + controller.playlist[idx].title, x: Int(listRect.minX) + 2, y: y, maxChars: titleChars, current: isCurrent)
+            drawText(duration, x: Int(listRect.maxX) - 27, y: y, maxChars: 5, current: isCurrent)
         }
     }
 
-    private func drawBottomTime() {
+    private func drawBottomTime(width w: CGFloat, height h: CGFloat) {
         let total = controller.playlist.compactMap { $0.duration }.reduce(0, +)
-        drawText("\(controller.playlist.count) TRACKS", x: 112, y: 82, maxChars: 18, current: false)
-        drawText(formatTime(total), x: 228, y: 82, maxChars: 7, current: false)
+        let y = Int(h - 34)
+        drawText("\(controller.playlist.count) TRACKS", x: max(112, Int(w) - 163), y: y, maxChars: 18, current: false)
+        drawText(formatTime(total), x: Int(w) - 47, y: y, maxChars: 7, current: false)
     }
 
     private func drawText(_ text: String, x: Int, y: Int, maxChars: Int, current: Bool) {
@@ -233,18 +267,62 @@ final class PlaylistView: NSView {
         }
     }
 
+    private func drawTiled(src: CGRect, dst: CGRect) {
+        guard dst.width > 0, dst.height > 0 else { return }
+        var y = dst.minY
+        while y < dst.maxY {
+            let h = min(src.height, dst.maxY - y)
+            var x = dst.minX
+            while x < dst.maxX {
+                let w = min(src.width, dst.maxX - x)
+                skin.pledit.draw(src: CGRect(x: src.minX, y: src.minY, width: w, height: h), dst: CGRect(x: x, y: y, width: w, height: h))
+                x += w
+            }
+            y += h
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let p = winampPoint(event)
         pressed = hit(p)
-        if pressed == .drag { window?.performDrag(with: event) }
+        if pressed == .resize {
+            resizeStartFrame = window?.frame
+            resizeStartScreenPoint = window?.convertPoint(toScreen: event.locationInWindow)
+        } else if pressed == .drag {
+            window?.performDrag(with: event)
+        }
         needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if pressed == .resize, let window, let startFrame = resizeStartFrame, let startPoint = resizeStartScreenPoint {
+            let now = window.convertPoint(toScreen: event.locationInWindow)
+            let dx = now.x - startPoint.x
+            let dy = now.y - startPoint.y
+            let minW = 275 * pixelScale
+            let minH = 116 * pixelScale
+            let newW = max(minW, startFrame.width + dx)
+            let newH = max(minH, startFrame.height - dy)
+            let newFrame = NSRect(x: startFrame.minX, y: startFrame.maxY - newH, width: newW, height: newH)
+            window.setFrame(newFrame, display: true)
+            needsDisplay = true
+            return
+        }
+        guard pressed == .scrollbar else { return }
+        let p = winampPoint(event)
+        let extra = max(0, controller.playlist.count - listRows)
+        controller.playlistScroll = Int(((p.y - 20).clamped(0, listRect.height) / max(1, listRect.height)) * CGFloat(extra))
     }
 
     override func mouseUp(with event: NSEvent) {
         let r = pressed
         let p = winampPoint(event)
         pressed = nil
+        if r == .resize {
+            resizeStartFrame = nil
+            resizeStartScreenPoint = nil
+        }
         defer { needsDisplay = true }
         switch r {
         case .close:
@@ -254,17 +332,21 @@ final class PlaylistView: NSView {
         case .misc: controller.clearPlaylist()
         case .select: selected = controller.currentPlaylistIndex
         case .list:
-            let row = Int((p.y - 22) / 10)
+            let row = Int((p.y - listRect.minY) / 10)
             let idx = controller.playlistScroll + row
             if controller.playlist.indices.contains(idx) { selected = idx; if event.clickCount >= 2 { controller.playPlaylistItem(at: idx) } }
         case .scrollbar:
-            controller.playlistScroll = Int(((p.y - 22).clamped(0, 55) / 55) * CGFloat(max(0, controller.playlist.count - 5)))
+            let extra = max(0, controller.playlist.count - listRows)
+            controller.playlistScroll = Int(((p.y - 20).clamped(0, listRect.height) / max(1, listRect.height)) * CGFloat(extra))
+        case .resize:
+            break
         default: break
         }
     }
 
     override func scrollWheel(with event: NSEvent) {
-        controller.playlistScroll += event.scrollingDeltaY > 0 ? -1 : 1
+        let rows = listRows
+        controller.playlistScroll = (controller.playlistScroll + (event.scrollingDeltaY > 0 ? -1 : 1)).clamped(0, max(0, controller.playlist.count - rows))
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
@@ -275,13 +357,17 @@ final class PlaylistView: NSView {
     }
 
     private func hit(_ p: CGPoint) -> Region {
-        if rect(264, 3, 9, 9).contains(p) { return .close }
-        if rect(12, 22, 243, 55).contains(p) { return .list }
-        if rect(255, 22, 20, 55).contains(p) { return .scrollbar }
-        if rect(11, 88, 40, 14).contains(p) { return .add }
-        if rect(52, 88, 40, 14).contains(p) { return .remove }
-        if rect(94, 88, 40, 14).contains(p) { return .select }
-        if rect(136, 88, 40, 14).contains(p) { return .misc }
+        let w = classicSize.width
+        let h = classicSize.height
+        if rect(w - 11, 3, 9, 9).contains(p) { return .close }
+        if rect(w - 16, 20, 9, h - 58).contains(p) { return .scrollbar }
+        if rect(w - 20, h - 20, 20, 20).contains(p) { return .resize }
+        if listRect.contains(p) { return .list }
+        let by = h - 28
+        if rect(11, by, 40, 14).contains(p) { return .add }
+        if rect(52, by, 40, 14).contains(p) { return .remove }
+        if rect(94, by, 40, 14).contains(p) { return .select }
+        if rect(136, by, 40, 14).contains(p) { return .misc }
         return .drag
     }
 
