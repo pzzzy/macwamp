@@ -60,6 +60,29 @@ final class WinampWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+
+private final class AnalyzerBridge: @unchecked Sendable {
+    weak var controller: WinampController?
+    init(controller: WinampController) { self.controller = controller }
+}
+
+private func makeAnalyzerTapBlock(bridge: AnalyzerBridge) -> AVAudioNodeTapBlock {
+    { buffer, _ in
+        guard let channelData = buffer.floatChannelData, buffer.frameLength > 0 else { return }
+        let frameCount = Int(buffer.frameLength)
+        let channels = Int(buffer.format.channelCount)
+        var mono = [Float](repeating: 0, count: frameCount)
+        for ch in 0..<max(1, channels) {
+            let samples = UnsafeBufferPointer(start: channelData[ch], count: frameCount)
+            for i in 0..<frameCount { mono[i] += samples[i] / Float(max(1, channels)) }
+        }
+        let sampleRate = buffer.format.sampleRate
+        DispatchQueue.main.async { [weak bridge] in
+            bridge?.controller?.updateAnalyzer(samples: mono, sampleRate: sampleRate)
+        }
+    }
+}
+
 @MainActor
 final class WinampController: NSObject {
     enum State { case stopped, playing, paused }
@@ -93,6 +116,7 @@ final class WinampController: NSObject {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let eqUnit = AVAudioUnitEQ(numberOfBands: 10)
+    private var analyzerBridge: AnalyzerBridge?
     private var audioFile: AVAudioFile?
     private var currentURL: URL?
     private var playbackStartOffset: AVAudioFramePosition = 0
@@ -103,6 +127,7 @@ final class WinampController: NSObject {
     private(set) var duration: TimeInterval = 0
     private(set) var currentTime: TimeInterval = 0
     private(set) var analyzerLevel: Double = 0
+    private(set) var analyzerBands: [Double] = Array(repeating: 0, count: 75)
 
     override init() {
         super.init()
@@ -159,8 +184,9 @@ final class WinampController: NSObject {
             currentTime = 0
             schedulePlayback(from: 0)
             updateAudioInfo(for: url)
-            title = url.deletingPathExtension().lastPathComponent
-            upsertPlaylistEntry(url: url, duration: duration)
+            let entry = playlistEntry(for: url)
+            title = entry.title
+            upsertPlaylistEntry(url: url, title: entry.title, duration: duration)
             if autoplay { play() } else { state = .stopped }
         } catch {
             NSSound.beep()
@@ -174,6 +200,7 @@ final class WinampController: NSObject {
         engine.attach(eqUnit)
         engine.connect(playerNode, to: eqUnit, format: nil)
         engine.connect(eqUnit, to: engine.mainMixerNode, format: nil)
+        installAnalyzerTap()
         playerNode.volume = Float(volume) / 255
         playerNode.pan = Float(balance) / 127
         let freqs: [Float] = [70, 180, 320, 600, 1000, 3000, 6000, 12000, 14000, 16000]
@@ -192,6 +219,46 @@ final class WinampController: NSObject {
         for (i, band) in eqUnit.bands.enumerated() where i < eqBands.count {
             band.gain = Float(eqBands[i] - 32) / 32.0 * 12.0
         }
+    }
+
+    private func installAnalyzerTap() {
+        let bridge = AnalyzerBridge(controller: self)
+        analyzerBridge = bridge
+        let format = eqUnit.outputFormat(forBus: 0)
+        eqUnit.installTap(onBus: 0, bufferSize: 1024, format: format, block: makeAnalyzerTapBlock(bridge: bridge))
+    }
+
+    func updateAnalyzer(samples: [Float], sampleRate: Double) {
+        guard state == .playing, !samples.isEmpty else { return }
+        let n = min(samples.count, 1024)
+        let minFreq = 60.0
+        let maxFreq = min(16000.0, max(1000.0, sampleRate / 2.0 - 100.0))
+        var newBands = [Double](repeating: 0, count: 75)
+        for band in 0..<75 {
+            let t = Double(band) / 74.0
+            let freq = minFreq * pow(maxFreq / minFreq, t)
+            let omega = 2.0 * Double.pi * freq / sampleRate
+            var re = 0.0
+            var im = 0.0
+            var i = 0
+            while i < n {
+                let window = 0.5 - 0.5 * cos((2.0 * Double.pi * Double(i)) / Double(max(1, n - 1)))
+                let s = Double(samples[i]) * window
+                let phase = omega * Double(i)
+                re += s * cos(phase)
+                im -= s * sin(phase)
+                i += 2
+            }
+            let mag = sqrt(re * re + im * im) / Double(max(1, n / 2))
+            let db = 20.0 * log10(max(mag, 0.000001))
+            let normalized = ((db + 58.0) / 44.0).clamped(0.0, 1.0)
+            newBands[band] = pow(normalized, 0.72)
+        }
+        var smoothed = analyzerBands
+        for i in 0..<75 { smoothed[i] = max(newBands[i], smoothed[i] * 0.68) }
+        analyzerBands = smoothed
+        analyzerLevel = (smoothed.reduce(0, +) / Double(smoothed.count)).clamped(0, 1)
+        notifyChangeHandlers()
     }
 
     private func schedulePlayback(from offset: AVAudioFramePosition) {
@@ -378,14 +445,13 @@ final class WinampController: NSObject {
         return PlaylistEntry(url: url, title: title, duration: duration)
     }
 
-    private func upsertPlaylistEntry(url: URL, duration: TimeInterval) {
+    private func upsertPlaylistEntry(url: URL, title: String, duration: TimeInterval) {
         if let existing = playlist.firstIndex(where: { $0.url == url }) {
             currentPlaylistIndex = existing
+            playlist[existing].title = title
             playlist[existing].duration = duration
         } else {
-            var entry = playlistEntry(for: url)
-            entry.duration = duration
-            playlist.append(entry)
+            playlist.append(PlaylistEntry(url: url, title: title, duration: duration))
             currentPlaylistIndex = playlist.count - 1
         }
     }
@@ -475,6 +541,7 @@ final class WinampController: NSObject {
         if audioFile != nil { schedulePlayback(from: 0) }
         currentTime = 0
         analyzerLevel = 0
+        analyzerBands = Array(repeating: 0, count: 75)
         state = .stopped
     }
 
@@ -503,8 +570,8 @@ final class WinampController: NSObject {
                     if self.state == .playing {
                         let frame = self.currentFrameOffset()
                         self.currentTime = (Double(frame) / max(1, self.audioSampleRate)).clamped(0, self.duration)
-                        let phase = self.currentTime * 7.0
-                        self.analyzerLevel = (0.35 + 0.65 * abs(sin(phase))).clamped(0, 1)
+                        self.analyzerBands = self.analyzerBands.map { ($0 * 0.92).clamped(0, 1) }
+                        self.analyzerLevel = (self.analyzerBands.reduce(0, +) / Double(max(1, self.analyzerBands.count))).clamped(0, 1)
                         if self.currentTime >= max(0, self.duration - 0.05), !self.playerNode.isPlaying {
                             self.nextTrack()
                         }

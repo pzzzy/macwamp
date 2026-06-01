@@ -7,6 +7,8 @@ final class WinampView: NSView {
     private var pressedRegion: Region?
     private var tick = 0
     private var displayTimer: Timer?
+    private var analyzerPeaks: [Int] = Array(repeating: 0, count: 75)
+    private var analyzerPeakAges: [Int] = Array(repeating: 0, count: 75)
 
     private enum Region: Equatable {
         case prev, play, pause, stop, next, eject
@@ -81,22 +83,32 @@ final class WinampView: NSView {
             NSColor(calibratedRed: 49/255, green: 156/255, blue: 8/255, alpha: 1),
             NSColor(calibratedRed: 41/255, green: 148/255, blue: 0, alpha: 1),
         ]
-        let energy = controller.state == .playing ? max(0.08, controller.analyzerLevel) : 0
-        for band in 0..<19 {
-            let x = 24 + band * 4
-            let spectralShape = 1.0 - abs(Double(band) - 7.5) / 14.0
-            let motion = (sin(Double(tick + band * 9) / 4.8) + sin(Double(tick * 2 + band * 13) / 11.0) + 2) / 4
-            let normalized = (0.25 + spectralShape * 0.75) * (0.45 + motion * 0.55) * energy
-            let height = controller.state == .playing ? Int((normalized * 17).clamped(1, 15)) : 0
-            for col in 0..<3 {
-                for y in stride(from: 0, to: height, by: 2) {
-                    palette[(14 - y).clamped(0, palette.count - 1)].setFill()
-                    NSRect(x: x + col, y: 43 + 15 - y, width: 1, height: 1).fill()
+        let bands = controller.analyzerBands
+        for column in 0..<75 {
+            let value = column < bands.count && controller.state == .playing ? bands[column] : 0
+            let height = Int((value * 15.0).rounded()).clamped(0, 15)
+            let x = 24 + column
+            if height > 0 {
+                var y = 0
+                while y < height {
+                    let paletteIndex = (14 - y).clamped(0, palette.count - 1)
+                    palette[paletteIndex].setFill()
+                    NSRect(x: x, y: 43 + 15 - y, width: 1, height: 1).fill()
+                    y += 2
                 }
             }
-            if controller.state == .playing, height > 2 {
+            if height >= analyzerPeaks[column] {
+                analyzerPeaks[column] = height
+                analyzerPeakAges[column] = 0
+            } else if tick % 2 == 0 {
+                analyzerPeakAges[column] += 1
+                if analyzerPeakAges[column] > 2 { analyzerPeaks[column] = max(0, analyzerPeaks[column] - 1) }
+            }
+            if controller.state != .playing { analyzerPeaks[column] = max(0, analyzerPeaks[column] - 1) }
+            let peak = analyzerPeaks[column]
+            if peak > 1 {
                 NSColor(calibratedRed: 130/255, green: 214/255, blue: 33/255, alpha: 1).setFill()
-                NSRect(x: x, y: 43 + max(0, 15 - height - 2), width: 3, height: 1).fill()
+                NSRect(x: x, y: 43 + max(0, 15 - peak - 1), width: 1, height: 1).fill()
             }
         }
     }
