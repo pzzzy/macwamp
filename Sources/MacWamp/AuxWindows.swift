@@ -364,8 +364,10 @@ final class PlaylistView: NSView {
         case .close:
             controller.playlistWindow?.orderOut(nil); controller.playlistVisible = false
         case .add: controller.openPlaylistPanel()
-        case .remove: if let selected { controller.removePlaylistItem(at: selected); self.selected = nil }
-        case .misc: controller.clearPlaylist()
+        case .remove:
+            let idx = selected ?? controller.currentPlaylistIndex
+            if let idx { controller.removePlaylistItem(at: idx); self.selected = nil }
+        case .misc: showListOptionsMenu(at: p)
         case .listOpts: showListOptionsMenu(at: p)
         case let .media(button): handleMediaButton(button)
         case .select: selected = controller.currentPlaylistIndex
@@ -399,20 +401,21 @@ final class PlaylistView: NSView {
         let h = classicSize.height
         if rect(w - 11, 3, 9, 9).contains(p) { return .close }
         if rect(w - 16, 20, 9, h - 58).contains(p) { return .scrollbar }
-        if rect(w - 28, h - 24, 28, 24).contains(p) { return .resize }
+        let bottomEdge = p.y >= h - 45 || p.y <= 45
+        if bottomEdge {
+            if rect(11, 0, 24, h).contains(p) { return .add }
+            if rect(41, 0, 24, h).contains(p) { return .remove }
+            if rect(70, 0, 24, h).contains(p) { return .select }
+            if rect(99, 0, 24, h).contains(p) { return .misc }
+            if rect(w - 146, 0, 10, h).contains(p) { return .media(.previous) }
+            if rect(w - 137, 0, 11, h).contains(p) { return .media(.play) }
+            if rect(w - 126, 0, 10, h).contains(p) { return .media(.pause) }
+            if rect(w - 116, 0, 10, h).contains(p) { return .media(.stop) }
+            if rect(w - 106, 0, 11, h).contains(p) { return .media(.next) }
+            if rect(w - 44, 0, 22, h).contains(p) { return .listOpts }
+            if rect(w - 18, 0, 18, h).contains(p) { return .resize }
+        }
         if listRect.contains(p) { return .list }
-        let by = h - 28
-        if rect(11, by, 40, 14).contains(p) { return .add }
-        if rect(52, by, 40, 14).contains(p) { return .remove }
-        if rect(94, by, 40, 14).contains(p) { return .select }
-        if rect(136, by, 40, 14).contains(p) { return .misc }
-        let transportY = h - 20
-        if rect(w - 102, transportY, 8, 8).contains(p) { return .media(.previous) }
-        if rect(w - 92, transportY, 8, 8).contains(p) { return .media(.play) }
-        if rect(w - 82, transportY, 8, 8).contains(p) { return .media(.pause) }
-        if rect(w - 72, transportY, 8, 8).contains(p) { return .media(.stop) }
-        if rect(w - 62, transportY, 8, 8).contains(p) { return .media(.next) }
-        if rect(w - 51, h - 36, 36, 18).contains(p) { return .listOpts }
         return .drag
     }
 

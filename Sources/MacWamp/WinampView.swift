@@ -84,31 +84,35 @@ final class WinampView: NSView {
             NSColor(calibratedRed: 41/255, green: 148/255, blue: 0, alpha: 1),
         ]
         let bands = controller.analyzerBands
-        for column in 0..<75 {
-            let value = column < bands.count && controller.state == .playing ? bands[column] : 0
+        let barCount = 19
+        for bar in 0..<barCount {
+            let start = (bar * bands.count) / barCount
+            let end = max(start + 1, ((bar + 1) * bands.count) / barCount)
+            let slice = bands[start..<min(end, bands.count)]
+            let value = controller.state == .playing ? (slice.max() ?? 0) : 0
             let height = Int((value * 15.0).rounded()).clamped(0, 15)
-            let x = 24 + column
+            let x = 24 + bar * 4
             if height > 0 {
                 var y = 0
                 while y < height {
                     let paletteIndex = (14 - y).clamped(0, palette.count - 1)
                     palette[paletteIndex].setFill()
-                    NSRect(x: x, y: 43 + 15 - y, width: 1, height: 1).fill()
+                    NSRect(x: x, y: 43 + 15 - y, width: 3, height: 1).fill()
                     y += 2
                 }
             }
-            if height >= analyzerPeaks[column] {
-                analyzerPeaks[column] = height
-                analyzerPeakAges[column] = 0
+            if height >= analyzerPeaks[bar] {
+                analyzerPeaks[bar] = height
+                analyzerPeakAges[bar] = 0
             } else if tick % 2 == 0 {
-                analyzerPeakAges[column] += 1
-                if analyzerPeakAges[column] > 2 { analyzerPeaks[column] = max(0, analyzerPeaks[column] - 1) }
+                analyzerPeakAges[bar] += 1
+                if analyzerPeakAges[bar] > 2 { analyzerPeaks[bar] = max(0, analyzerPeaks[bar] - 1) }
             }
-            if controller.state != .playing { analyzerPeaks[column] = max(0, analyzerPeaks[column] - 1) }
-            let peak = analyzerPeaks[column]
+            if controller.state != .playing { analyzerPeaks[bar] = max(0, analyzerPeaks[bar] - 1) }
+            let peak = analyzerPeaks[bar]
             if peak > 1 {
                 NSColor(calibratedRed: 130/255, green: 214/255, blue: 33/255, alpha: 1).setFill()
-                NSRect(x: x, y: 43 + max(0, 15 - peak - 1), width: 1, height: 1).fill()
+                NSRect(x: x, y: 43 + max(0, 15 - peak - 1), width: 3, height: 1).fill()
             }
         }
     }
