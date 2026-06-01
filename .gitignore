@@ -1,0 +1,23 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.dSYM/
+*.swp
+.env
+.env.*
+*.log
+*.crash
+*.mp3
+*.m4a
+*.wav
+*.aiff
+*.flac
+*.zip
+*.wsz
+Screenshots/
+
+# Optional user-imported Winamp skin assets: local only, not for redistribution
+Sources/MacWamp/Resources/WinampClassic/*.bmp
+!Sources/MacWamp/Resources/WinampClassic/.gitkeep
