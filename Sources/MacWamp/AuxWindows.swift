@@ -116,7 +116,10 @@ final class EqualizerView: NSView {
 
     private func updateContinuous(point p: CGPoint) {
         guard let pressed else { return }
-        let val = Int(((101 - p.y).clamped(0, 63) / 63) * 64)
+        // Mouse event coordinates arrive bottom-origin for this borderless auxiliary view, while the
+        // Winamp EQ artwork is drawn top-origin. Map the slider rail so dragging upward raises
+        // the value and dragging downward lowers it.
+        let val = Int(((p.y - 38).clamped(0, 63) / 63) * 64)
         switch pressed {
         case .preamp: controller.eqPreamp = val
         case let .band(i): controller.setEqBand(i, value: val)
@@ -174,7 +177,7 @@ final class PlaylistView: NSView {
                height: max(116, floor(bounds.height / pixelScale)))
     }
     private var listRows: Int { max(1, Int((classicSize.height - 60) / 10)) }
-    private var listRect: CGRect { CGRect(x: 12, y: 22, width: classicSize.width - 32, height: classicSize.height - 60) }
+    private var listRect: CGRect { CGRect(x: 12, y: 20, width: classicSize.width - 32, height: classicSize.height - 58) }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -251,9 +254,9 @@ final class PlaylistView: NSView {
 
     private func drawBottomTime(width w: CGFloat, height h: CGFloat) {
         let total = controller.playlist.compactMap { $0.duration }.reduce(0, +)
-        let y = Int(h - 34)
-        drawText("\(controller.playlist.count) TRACKS", x: max(112, Int(w) - 163), y: y, maxChars: 18, current: false)
-        drawText(formatTime(total), x: Int(w) - 47, y: y, maxChars: 7, current: false)
+        let y = Int(h - 28)
+        let status = "\(controller.playlist.count) TRACKS \(formatTime(total))"
+        drawText(status, x: max(128, Int(w) - 143), y: y, maxChars: 19, current: false)
     }
 
     private func drawText(_ text: String, x: Int, y: Int, maxChars: Int, current: Bool) {
@@ -361,7 +364,7 @@ final class PlaylistView: NSView {
         let h = classicSize.height
         if rect(w - 11, 3, 9, 9).contains(p) { return .close }
         if rect(w - 16, 20, 9, h - 58).contains(p) { return .scrollbar }
-        if rect(w - 20, h - 20, 20, 20).contains(p) { return .resize }
+        if rect(w - 40, h - 38, 40, 38).contains(p) { return .resize }
         if listRect.contains(p) { return .list }
         let by = h - 28
         if rect(11, by, 40, 14).contains(p) { return .add }
