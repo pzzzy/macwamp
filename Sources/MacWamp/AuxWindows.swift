@@ -1,5 +1,17 @@
 import AppKit
 
+@MainActor
+private final class PlaylistMenuTarget: NSObject {
+    private weak var controller: WinampController?
+
+    init(controller: WinampController) { self.controller = controller }
+
+    @objc func addFiles(_ sender: Any?) { controller?.openPlaylistPanel() }
+    @objc func clear(_ sender: Any?) { controller?.clearPlaylist() }
+    @objc func toggleShuffle(_ sender: Any?) { controller?.shuffle.toggle() }
+    @objc func toggleRepeat(_ sender: Any?) { controller?.repeatOne.toggle() }
+}
+
 final class EqualizerView: NSView {
     private let controller: WinampController
     private let skin = WinampSkin()
@@ -153,8 +165,10 @@ final class PlaylistView: NSView {
     private var changeID: UUID?
     private var resizeStartFrame: NSRect?
     private var resizeStartScreenPoint: NSPoint?
+    private var menuTarget: PlaylistMenuTarget?
 
-    private enum Region: Equatable { case close, add, remove, select, misc, list, scrollbar, resize, drag }
+    private enum Region: Equatable { case close, add, remove, select, misc, listOpts, media(MediaButton), list, scrollbar, resize, drag }
+    private enum MediaButton: Equatable { case previous, play, pause, stop, next }
 
     init(frame: NSRect, controller: WinampController, pixelScale: CGFloat) {
         self.controller = controller
@@ -221,14 +235,34 @@ final class PlaylistView: NSView {
     }
 
     private func drawScrollbar(width w: CGFloat, height h: CGFloat) {
-        let track = CGRect(x: w - 15, y: 20, width: 8, height: h - 58)
-        drawTiled(src: CGRect(x: 36, y: 42, width: 8, height: 29), dst: track)
+        let trackH = h - 58
+        let track = CGRect(x: w - 15, y: 20, width: 8, height: trackH)
         let extra = max(0, controller.playlist.count - listRows)
-        guard extra > 0 else { return }
-        let thumbH = max(CGFloat(18), min(track.height, track.height * CGFloat(listRows) / CGFloat(controller.playlist.count)))
-        let maxScroll = max(1, extra)
-        let thumbY = track.minY + (track.height - thumbH) * CGFloat(controller.playlistScroll.clamped(0, extra)) / CGFloat(maxScroll)
-        skin.pledit.draw(src: CGRect(x: pressed == .scrollbar ? 61 : 52, y: 53, width: 8, height: 18), dst: CGRect(x: track.minX, y: thumbY, width: 8, height: thumbH))
+        let thumbH = CGFloat(18)
+        let yp: CGFloat
+        if extra > 0 {
+            yp = ((trackH - thumbH) * CGFloat(controller.playlistScroll.clamped(0, extra))) / CGFloat(max(1, extra))
+        } else {
+            yp = 0
+        }
+
+        // Port of draw_pe_vslide(): tile the 8px track around a fixed 18px thumb instead of stretching the thumb.
+        var y: CGFloat = 0
+        while y < max(0, yp - 28) {
+            let h2 = min(CGFloat(29), max(0, yp - y))
+            skin.pledit.draw(src: CGRect(x: 36, y: 42, width: 8, height: h2), dst: CGRect(x: track.minX, y: track.minY + y, width: 8, height: h2))
+            y += 29
+        }
+        if y < yp {
+            skin.pledit.draw(src: CGRect(x: 36, y: 42, width: 8, height: yp - y), dst: CGRect(x: track.minX, y: track.minY + y, width: 8, height: yp - y))
+        }
+        skin.pledit.draw(src: CGRect(x: pressed == .scrollbar ? 61 : 52, y: 53, width: 8, height: 18), dst: CGRect(x: track.minX, y: track.minY + yp, width: 8, height: 18))
+        y = yp + thumbH
+        while y < track.height {
+            let h2 = min(CGFloat(29), track.height - y)
+            skin.pledit.draw(src: CGRect(x: 36, y: 42, width: 8, height: h2), dst: CGRect(x: track.minX, y: track.minY + y, width: 8, height: h2))
+            y += 29
+        }
     }
 
     private func drawEntries() {
@@ -254,9 +288,8 @@ final class PlaylistView: NSView {
 
     private func drawBottomTime(width w: CGFloat, height h: CGFloat) {
         let total = controller.playlist.compactMap { $0.duration }.reduce(0, +)
-        let y = Int(h - 28)
-        let status = "\(controller.playlist.count) TRACKS \(formatTime(total))"
-        drawText(status, x: max(128, Int(w) - 143), y: y, maxChars: 19, current: false)
+        drawText("\(controller.playlist.count) TRACKS", x: max(128, Int(w) - 143), y: Int(h - 28), maxChars: 19, current: false)
+        drawText(formatTime(total), x: Int(w) - 86, y: Int(h - 15), maxChars: 7, current: false)
     }
 
     private func drawText(_ text: String, x: Int, y: Int, maxChars: Int, current: Bool) {
@@ -333,6 +366,8 @@ final class PlaylistView: NSView {
         case .add: controller.openPlaylistPanel()
         case .remove: if let selected { controller.removePlaylistItem(at: selected); self.selected = nil }
         case .misc: controller.clearPlaylist()
+        case .listOpts: showListOptionsMenu(at: p)
+        case let .media(button): handleMediaButton(button)
         case .select: selected = controller.currentPlaylistIndex
         case .list:
             let row = Int((p.y - listRect.minY) / 10)
@@ -364,14 +399,46 @@ final class PlaylistView: NSView {
         let h = classicSize.height
         if rect(w - 11, 3, 9, 9).contains(p) { return .close }
         if rect(w - 16, 20, 9, h - 58).contains(p) { return .scrollbar }
-        if rect(w - 40, h - 38, 40, 38).contains(p) { return .resize }
+        if rect(w - 28, h - 24, 28, 24).contains(p) { return .resize }
         if listRect.contains(p) { return .list }
         let by = h - 28
         if rect(11, by, 40, 14).contains(p) { return .add }
         if rect(52, by, 40, 14).contains(p) { return .remove }
         if rect(94, by, 40, 14).contains(p) { return .select }
         if rect(136, by, 40, 14).contains(p) { return .misc }
+        let transportY = h - 20
+        if rect(w - 102, transportY, 8, 8).contains(p) { return .media(.previous) }
+        if rect(w - 92, transportY, 8, 8).contains(p) { return .media(.play) }
+        if rect(w - 82, transportY, 8, 8).contains(p) { return .media(.pause) }
+        if rect(w - 72, transportY, 8, 8).contains(p) { return .media(.stop) }
+        if rect(w - 62, transportY, 8, 8).contains(p) { return .media(.next) }
+        if rect(w - 51, h - 36, 36, 18).contains(p) { return .listOpts }
         return .drag
+    }
+
+    private func handleMediaButton(_ button: MediaButton) {
+        switch button {
+        case .previous: controller.previousTrack()
+        case .play: controller.play()
+        case .pause: controller.pause()
+        case .stop: controller.stop()
+        case .next: controller.nextTrack()
+        }
+    }
+
+    private func showListOptionsMenu(at p: CGPoint) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Add Files or Folder…", action: #selector(PlaylistMenuTarget.addFiles(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Clear Playlist", action: #selector(PlaylistMenuTarget.clear(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        let shuffleItem = menu.addItem(withTitle: "Shuffle", action: #selector(PlaylistMenuTarget.toggleShuffle(_:)), keyEquivalent: "")
+        shuffleItem.state = controller.shuffle ? .on : .off
+        let repeatItem = menu.addItem(withTitle: "Repeat", action: #selector(PlaylistMenuTarget.toggleRepeat(_:)), keyEquivalent: "")
+        repeatItem.state = controller.repeatOne ? .on : .off
+        let target = PlaylistMenuTarget(controller: controller)
+        menuTarget = target
+        for item in menu.items { item.target = target }
+        menu.popUp(positioning: nil, at: CGPoint(x: p.x * pixelScale, y: p.y * pixelScale), in: self)
     }
 
     private func formatTime(_ t: TimeInterval) -> String { String(format: "%d:%02d", Int(t) / 60, Int(t) % 60) }

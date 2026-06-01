@@ -313,7 +313,7 @@ final class WinampController: NSObject {
         guard !expanded.isEmpty else { NSSound.beep(); return }
         let wasEmpty = playlist.isEmpty
         for url in expanded where !playlist.contains(where: { $0.url == url }) {
-            playlist.append(PlaylistEntry(url: url, title: url.deletingPathExtension().lastPathComponent, duration: nil))
+            playlist.append(playlistEntry(for: url))
         }
         playlistScroll = playlistScroll.clamped(0, max(0, playlist.count - 1))
         if autoplayFirstIfEmpty, wasEmpty, let first = expanded.first { load(url: first, autoplay: true) }
@@ -345,12 +345,47 @@ final class WinampController: NSObject {
         return ["mp3", "m4a", "mp4", "aac", "wav", "aif", "aiff", "flac", "caf"].contains(ext)
     }
 
+    private func playlistEntry(for url: URL) -> PlaylistEntry {
+        var title = url.deletingPathExtension().lastPathComponent
+        var duration: TimeInterval?
+
+        if let file = try? AVAudioFile(forReading: url) {
+            let sampleRate = file.processingFormat.sampleRate
+            if sampleRate.isFinite, sampleRate > 0 {
+                duration = Double(file.length) / sampleRate
+            }
+        }
+
+        var audioFileID: AudioFileID?
+        if AudioFileOpenURL(url as CFURL, .readPermission, 0, &audioFileID) == noErr, let audioFileID {
+            defer { AudioFileClose(audioFileID) }
+            var unmanagedInfo: Unmanaged<CFDictionary>?
+            var size = UInt32(MemoryLayout<Unmanaged<CFDictionary>?>.size)
+            if AudioFileGetProperty(audioFileID, kAudioFilePropertyInfoDictionary, &size, &unmanagedInfo) == noErr,
+               let info = unmanagedInfo?.takeRetainedValue() as? [String: Any] {
+                let tagTitle = (info[kAFInfoDictionary_Title as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let artist = (info[kAFInfoDictionary_Artist as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let tagTitle, !tagTitle.isEmpty {
+                    if let artist, !artist.isEmpty, !tagTitle.localizedCaseInsensitiveContains(artist) {
+                        title = "\(artist) - \(tagTitle)"
+                    } else {
+                        title = tagTitle
+                    }
+                }
+            }
+        }
+
+        return PlaylistEntry(url: url, title: title, duration: duration)
+    }
+
     private func upsertPlaylistEntry(url: URL, duration: TimeInterval) {
         if let existing = playlist.firstIndex(where: { $0.url == url }) {
             currentPlaylistIndex = existing
             playlist[existing].duration = duration
         } else {
-            playlist.append(PlaylistEntry(url: url, title: url.deletingPathExtension().lastPathComponent, duration: duration))
+            var entry = playlistEntry(for: url)
+            entry.duration = duration
+            playlist.append(entry)
             currentPlaylistIndex = playlist.count - 1
         }
     }
