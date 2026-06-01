@@ -98,6 +98,7 @@ final class WinampController: NSObject {
     private var playbackStartOffset: AVAudioFramePosition = 0
     private var pausedFrameOffset: AVAudioFramePosition = 0
     private var audioSampleRate: Double = 44100
+    private var playbackGeneration: UInt64 = 0
     private var timer: Timer?
     private(set) var duration: TimeInterval = 0
     private(set) var currentTime: TimeInterval = 0
@@ -200,9 +201,14 @@ final class WinampController: NSObject {
         pausedFrameOffset = safeOffset
         let frames = AVAudioFrameCount(max(0, file.length - safeOffset))
         guard frames > 0 else { return }
-        playerNode.scheduleSegment(file, startingFrame: safeOffset, frameCount: frames, at: nil) { [weak self] in
+        playbackGeneration &+= 1
+        let generation = playbackGeneration
+        playerNode.scheduleSegment(file, startingFrame: safeOffset, frameCount: frames, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] callbackType in
             Task { @MainActor [weak self] in
-                guard let self, self.state == .playing else { return }
+                guard let self,
+                      generation == self.playbackGeneration,
+                      callbackType == .dataPlayedBack,
+                      self.state == .playing else { return }
                 self.currentTime = self.duration
                 if self.repeatOne { self.seek(fraction: 0); self.play() }
                 else { self.nextTrack() }
