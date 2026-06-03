@@ -404,7 +404,10 @@ final class WinampController: NSObject {
             }
         }
         var seen = Set<String>()
-        return found.map { $0.standardizedFileURL }.filter { seen.insert($0.path).inserted }
+        return found
+            .map { $0.standardizedFileURL }
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            .filter { seen.insert($0.path).inserted }
     }
 
     private func isSupportedAudioFile(_ url: URL) -> Bool {
