@@ -67,7 +67,7 @@ private final class AnalyzerBridge: @unchecked Sendable {
 }
 
 private func makeAnalyzerTapBlock(bridge: AnalyzerBridge) -> AVAudioNodeTapBlock {
-    { buffer, _ in
+    { [bridge] buffer, _ in
         guard let channelData = buffer.floatChannelData, buffer.frameLength > 0 else { return }
         let frameCount = Int(buffer.frameLength)
         let channels = Int(buffer.format.channelCount)

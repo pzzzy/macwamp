@@ -16,5 +16,7 @@ jobs:
         run: swift --version
       - name: Build
         run: swift build -v
+      - name: Test
+        run: swift test -v
       - name: Validate package manifest
         run: swift package dump-package >/tmp/package.json

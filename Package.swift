@@ -19,6 +19,10 @@ let package = Package(
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("UniformTypeIdentifiers")
             ]
+        ),
+        .testTarget(
+            name: "MacWampTests",
+            dependencies: ["MacWamp"]
         )
     ]
 )

@@ -161,6 +161,7 @@ Run before submitting changes:
 
 ```sh
 swift build
+swift test
 swift package dump-package >/tmp/macwamp-package.json
 ```
 
